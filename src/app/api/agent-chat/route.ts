@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 interface AgentChatRequest {
   agentId: string;
@@ -11,97 +15,54 @@ interface AgentChatResponse {
   agentId: string;
 }
 
-const AGENT_PROMPTS: Record<string, string> = {
-  max: "You are Max 🐺, an AI executive assistant and COO-level strategist helping the user run their business. The user is a founder and content creator who runs AI trading bots. Be sharp, concise, strategic. Give real actionable advice.",
-  sage: "You are Sage 🌿, X/Twitter content specialist for the user. You write viral tweets in their voice — conversational, sharp, specific. Focus on hooks that make people stop scrolling. No fluff.",
-  knox: "You are Knox 🔐, operations and trading analyst for the user. You analyze Polymarket and Hyperliquid trading performance, spot patterns, suggest strategy improvements. Be data-driven and direct.",
-  nova: "You are Nova ⭐, YouTube strategy specialist for the user. You write scripts, hooks, thumbnails, titles. Think Mr Beast structure applied to the user's niche.",
-  pixel: "You are Pixel 🎨, web app product specialist for the user's products. You find UX improvements, feature ideas, competitor gaps. Think product manager + growth hacker.",
-};
+// Chat is executed by the hermes-bridge as `hermes -p <agentId> -z <prompt>`;
+// this route only enqueues an AgentRequest and waits for the bridge to write the result.
+const MAX_WAIT_MS = 300_000; // must exceed the bridge RUN_TIMEOUT_MS + poll interval
+const PROFILE_ID = /^[a-z0-9][a-z0-9_-]*$/i;
+
+function buildPrompt(message: string, history: AgentChatRequest['history'] = []): string {
+  const turns = (history || [])
+    .slice(-6)
+    .map((h) => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`)
+    .join('\n');
+  return turns ? `${turns}\nUser: ${message}` : message;
+}
 
 export async function POST(request: NextRequest): Promise<NextResponse<AgentChatResponse | { error: string }>> {
   try {
-    const body: AgentChatRequest = await request.json();
-    const { agentId, message, history = [] } = body;
+    const { agentId, message, history = [] } = (await request.json()) as AgentChatRequest;
 
-    // Validate inputs
     if (!agentId || !message) {
-      return NextResponse.json(
-        { error: 'Missing agentId or message' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Missing agentId or message' }, { status: 400 });
+    }
+    if (!PROFILE_ID.test(agentId)) {
+      return NextResponse.json({ error: `Unknown agent: ${agentId}` }, { status: 400 });
     }
 
-    if (!AGENT_PROMPTS[agentId]) {
-      return NextResponse.json(
-        { error: `Unknown agent: ${agentId}` },
-        { status: 400 }
-      );
-    }
-
-    const systemPrompt = AGENT_PROMPTS[agentId];
-    const apiKey = process.env.OPENROUTER_API_KEY;
-
-    if (!apiKey) {
-      console.error('OPENROUTER_API_KEY not configured');
-      return NextResponse.json(
-        { error: 'API configuration error' },
-        { status: 500 }
-      );
-    }
-
-    // Build messages array: system prompt + history + current message
-    const messages = [
-      ...history,
-      { role: 'user' as const, content: message },
-    ];
-
-    // Call OpenRouter API
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://your-app.vercel.app',
+    const row = await prisma.agentRequest.create({
+      data: {
+        origin: 'web',
+        kind: 'chat',
+        title: message.slice(0, 80),
+        prompt: buildPrompt(message, history),
+        agentId: agentId.toLowerCase(),
+        sideEffecting: false,
+        status: 'queued',
       },
-      body: JSON.stringify({
-        model: 'anthropic/claude-haiku-4-5',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          ...messages,
-        ],
-        max_tokens: 800,
-      }),
     });
 
-    if (!response.ok) {
-      const error = await response.text();
-      console.error('OpenRouter API error:', error);
-      return NextResponse.json(
-        { error: 'Failed to get response from AI model' },
-        { status: 500 }
-      );
+    const deadline = Date.now() + MAX_WAIT_MS;
+    while (Date.now() < deadline) {
+      const r = await prisma.agentRequest.findUnique({ where: { id: row.id } });
+      if (!r) break;
+      if (r.status === 'done') return NextResponse.json({ reply: r.result || '', agentId });
+      if (r.status === 'failed') return NextResponse.json({ error: r.error || 'Agent run failed' }, { status: 502 });
+      if (r.status === 'rejected') return NextResponse.json({ error: 'Request rejected' }, { status: 400 });
+      await new Promise((res) => setTimeout(res, 2000));
     }
-
-    const data = await response.json();
-    const reply = data.choices?.[0]?.message?.content || '';
-
-    if (!reply) {
-      return NextResponse.json(
-        { error: 'No response from AI model' },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({
-      reply,
-      agentId,
-    });
+    return NextResponse.json({ error: 'Timed out waiting for agent' }, { status: 504 });
   } catch (error) {
     console.error('Agent chat error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

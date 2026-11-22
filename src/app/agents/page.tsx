@@ -14,7 +14,7 @@ interface Agent {
   name: string;
   emoji: string;
   role: string;
-  status: "idle" | "working" | "error" | "offline";
+  status: "idle" | "online" | "active" | "working" | "error" | "offline";
   currentTask?: string;
   lastActive?: string;
   tasksCompleted: number;
@@ -140,10 +140,12 @@ function AgentChat({ agent, onClose }: { agent: Agent; onClose: () => void }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ agentId: agent.id, message: text, history: msgs }),
       });
-      const d = await r.json() as { reply: string };
-      setMsgs([...newMsgs, { role: "assistant", content: d.reply }]);
-    } catch {
-      setMsgs([...newMsgs, { role: "assistant", content: "Sorry, something went wrong. Try again." }]);
+      const d = await r.json() as { reply?: string; error?: string };
+      if (!r.ok) throw new Error(d.error || `Request failed (${r.status})`);
+      setMsgs([...newMsgs, { role: "assistant", content: d.reply || "The agent returned an empty response." }]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Request failed";
+      setMsgs([...newMsgs, { role: "assistant", content: `Could not reach ${agent.name}: ${message}` }]);
     }
     setLoading(false);
   }
@@ -242,8 +244,8 @@ export default function AgentsPage() {
     );
   }
 
-  const maxAgent = agents.find(a => a.id === "max");
-  const teamAgents = agents.filter(a => a.id !== "max");
+  const leadAgent = agents.find(a => a.id === "default") ?? agents[0];
+  const teamAgents = agents.filter(a => a.id !== leadAgent?.id);
   const online = agents.filter(a => a.status !== "offline").length;
   const working = agents.filter(a => a.status === "working").length;
   const totalTasks = agents.reduce((sum, a) => sum + a.tasksCompleted, 0);
@@ -316,11 +318,11 @@ export default function AgentsPage() {
                 <span>{a.emoji}</span> Chat with {a.name}
               </button>
             ))}
-            {agents.find(a => a.id === "max") && (
-              <button onClick={() => setChatAgent(agents.find(a => a.id === "max")!)}
+            {leadAgent && (
+              <button onClick={() => setChatAgent(leadAgent)}
                 className="flex items-center gap-2 px-3.5 py-1.5 rounded-full text-[12px] transition-colors"
                 style={{ color: "var(--accent)", background: "color-mix(in srgb, var(--accent) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--accent) 28%, transparent)" }}>
-                🐺 Chat with Max
+                {leadAgent.emoji} Chat with {leadAgent.name}
               </button>
             )}
           </div>
@@ -330,12 +332,12 @@ export default function AgentsPage() {
       {/* Cards View */}
       {view === "cards" && (
         <>
-          {/* Chief of Staff (Max) — full width */}
-          {maxAgent && (
+          {/* Chief of Staff — live default profile */}
+          {leadAgent && (
             <AgentCard
-              agent={maxAgent}
-              isExpanded={expandedAgent === maxAgent.id}
-              onToggle={() => setExpandedAgent(expandedAgent === maxAgent.id ? null : maxAgent.id)}
+              agent={leadAgent}
+              isExpanded={expandedAgent === leadAgent.id}
+              onToggle={() => setExpandedAgent(expandedAgent === leadAgent.id ? null : leadAgent.id)}
             />
           )}
 

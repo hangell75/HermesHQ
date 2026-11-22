@@ -60,31 +60,31 @@ const DEFAULT_AGENTS = [
 
 export async function GET() {
   try {
-    const states = await prisma.agentState.findMany();
-    const stateMap: Record<string, any> = {};
-    for (const s of states) {
-      stateMap[s.id] = s;
-    }
-
-    const agents = DEFAULT_AGENTS.map((agent) => {
-      const s = stateMap[agent.id] || {};
-      return {
-        ...agent,
-        status: s.status || agent.status,
-        currentTask: s.currentTask || undefined,
-        lastActive: s.lastActive || undefined,
-        tasksCompleted: s.tasksCompleted || agent.tasksCompleted,
-        totalCost: s.totalCost || agent.totalCost,
-        recentActivity: s.recentActivity || agent.recentActivity,
-      };
+    // Roster is driven by the hermes-bridge mirror of Hermes profiles (role prefix "Hermes").
+    const states = await prisma.agentState.findMany({
+      where: { role: { startsWith: "Hermes" } },
+      orderBy: { name: "asc" },
     });
+
+    const agents = states.map((s) => ({
+      id: s.id,
+      name: s.name,
+      emoji: s.emoji || "\u{1F916}",
+      role: s.role || "Hermes \u00B7 agent",
+      status: s.status || "offline",
+      tasksCompleted: s.tasksCompleted || 0,
+      totalCost: s.totalCost || 0,
+      currentTask: s.currentTask || undefined,
+      lastActive: s.lastActive || undefined,
+      recentActivity: Array.isArray(s.recentActivity) ? s.recentActivity : [],
+    }));
 
     return NextResponse.json(agents, {
       headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
     });
   } catch (error) {
     console.error("Agents API error:", error);
-    return NextResponse.json(DEFAULT_AGENTS, { status: 200 });
+    return NextResponse.json([], { status: 200 });
   }
 }
 

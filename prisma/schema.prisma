@@ -459,6 +459,7 @@ model AgentRequest {
   result        String?
   error         String?
   hermesTaskId  String?
+  agentId       String?    // target Hermes profile id (chat/oneshot routed via `hermes -p`)
   decidedAt     DateTime?
   startedAt     DateTime?
   finishedAt    DateTime?
@@ -467,6 +468,7 @@ model AgentRequest {
 
   @@index([status])
   @@index([createdAt])
+  @@index([agentId])
 }
 
 model AgentEvent {
