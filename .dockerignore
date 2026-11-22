@@ -1,0 +1,11 @@
+node_modules
+.next
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+hermes-bridge/node_modules
+hermes-bridge/.env
+npm-debug.log*
+*.log
