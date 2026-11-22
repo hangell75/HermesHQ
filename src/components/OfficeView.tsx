@@ -22,13 +22,9 @@ interface Agent {
 }
 
 // ── Desk layout ───────────────────────────────────────────
-const DESK_LAYOUT = [
-  { agentId: "max",   label: "CEO Corner",   zone: "ceo" },
-  { agentId: "sage",  label: "Research Bay", zone: "team" },
-  { agentId: "knox",  label: "Ops Desk",     zone: "team" },
-  { agentId: "nova",  label: "Creative Hub", zone: "team" },
-  { agentId: "pixel", label: "Lab",          zone: "team" },
-];
+// The bridge owns the roster. Keep the office layout keyed by the live
+// profile ids instead of a retired demo roster (max/sage/knox/nova/pixel).
+const DESK_LABELS = ["Research Bay", "Ops Desk", "Creative Hub", "Lab", "Studio"];
 
 // ── Status → visual config ────────────────────────────────
 const STATUS: Record<string, { glow: string; dot: string; bg: string; ring?: string }> = {
@@ -50,132 +46,13 @@ const WALK = {
   pixel: { wanderDur: "12s", bobDur: "0.42s", bobDelay: "0.15s", wanderDelay: "3.1s" },
 };
 
-// ── Pixel art sprites ─────────────────────────────────────
-// '.' = transparent, letter = palette color
-const SPRITE_DATA: Record<string, { palette: Record<string, string>; rows: string[] }> = {
-  max: {
-    palette: { E: "#374151", F: "#9CA3AF", A: "#F59E0B", S: "#E5E7EB", N: "#1F2937", T: "#F9FAFB" },
-    rows: [
-      "...EEE..EEE.....",
-      "..EEEEE.EEEEE...",
-      "..EFFFEEFFFE....",
-      "...FFFFFFFF.....",
-      "..FFFFFFFFFF....",
-      ".FFFAAFFAAFF....",
-      ".FFFFFFFFFFFFFF.",
-      ".FFFFSSSSSSFFF..",
-      ".FFFSNNNNNSFFF..",
-      ".FFFSSSSSSSFF...",
-      ".FFFFTFTTFTFFF..",
-      "..FFFFFFFFFFF...",
-      "...FFFFFFFFF....",
-      "................",
-      "................",
-      "................",
-    ],
-  },
-  sage: {
-    palette: { L: "#22C55E", D: "#15803D", G: "#86EFAC", Y: "#FDE047", K: "#14532D" },
-    rows: [
-      "....LLLLLLL.....",
-      "...LDDDDDDLL....",
-      "..LGGGGGGGGG....",
-      ".LGGGGGGGGGGGL..",
-      ".GGGGGGGGGGGGG..",
-      ".GGGYYGGGGYYGG..",
-      ".GGGYYGGGGYYGG..",
-      ".GGGGGGGGGGGGG..",
-      ".GGGGGKKKGGGGG..",
-      ".GGGGKGGGGKGGG..",
-      ".GGGGGGGGGGGGG..",
-      "..GGGGGGGGGGG...",
-      "...GGGGGGGGG....",
-      "....GGGGGGG.....",
-      "................",
-      "................",
-    ],
-  },
-  knox: {
-    palette: { H: "#1E3A5F", V: "#0F4C75", B: "#0A2540", C: "#00E5FF", W: "#6B7280" },
-    rows: [
-      "....HHHHHHHH....",
-      "...HHHHHHHHHH...",
-      "..HHHHHHHHHHHH..",
-      ".HHHVVVVVVVVHHH.",
-      ".HHHVBBBBBBVHHH.",
-      ".HHHVBCCBBCBVHH.",
-      ".HHHVBCCBBCBVHH.",
-      ".HHHVBBBBBBVHHH.",
-      ".HHHHHHHHHHHHHH.",
-      "..HWWWHHHHWWWH..",
-      "...HHHHHHHHHHH..",
-      "....HHHHHHHH....",
-      "................",
-      "................",
-      "................",
-      "................",
-    ],
-  },
-  nova: {
-    palette: { P: "#A855F7", S: "#FDE047", W: "#FFFFFF", M: "#7C3AED" },
-    rows: [
-      "..S...SSSS...S..",
-      "...S.SPPPP.S....",
-      "..S.PPPPPPPP.S..",
-      "..PPPPPPPPPPPP..",
-      ".PPPPPPPPPPPPPP.",
-      ".PPPWWPPPPPWWPP.",
-      ".PPPWWPPPPPWWPP.",
-      ".PPPPPPPPPPPPP..",
-      ".PPPPPPPPPPPPP..",
-      ".PPPPPMMPPPPP...",
-      ".PPPPMPPPMPP....",
-      ".PPPPPPPPPPPP...",
-      "..PPPPPPPPPP....",
-      "...S.PPPP.S.....",
-      "....SSSSSS......",
-      "................",
-    ],
-  },
-  pixel: {
-    palette: { B: "#1D4ED8", R: "#EF4444", F: "#FCD34D", K: "#1E1B4B", W: "#FFFFFF" },
-    rows: [
-      "...BBBBBBBBBB...",
-      "..BBBRBBBBBBBB..",
-      "..BFFFFFFFFFF...",
-      ".BFFFFFFFFFFFF..",
-      ".BFFFFFFFFFFFF..",
-      ".BFFKKFFFKKFFF..",
-      ".BFFKKFFFKKFFF..",
-      ".BFFFFFFFFFFFF..",
-      ".BFFFFFFFFFFFF..",
-      ".BFFFWWFWWFFFF..",
-      ".BFFWWWWWWWFFF..",
-      ".BFFFFFFFFFFFF..",
-      "..BFFFFFFFFFB...",
-      "...BBBBBBBBB....",
-      "................",
-      "................",
-    ],
-  },
-};
-
-function PixelSprite({ agentId, size }: { agentId: string; size: number }) {
-  const data = SPRITE_DATA[agentId];
-  if (!data) return <span style={{ fontSize: size * 0.6 }}>🤖</span>;
-  const { palette, rows } = data;
-  const gw = rows[0]?.length ?? 16;
-  const gh = rows.length;
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${gw} ${gh}`} style={{ imageRendering: "pixelated" }}>
-      {rows.map((row, y) =>
-        row.split("").map((char, x) => {
-          const color = char === "." ? null : palette[char];
-          return color ? <rect key={`${x}-${y}`} x={x} y={y} width={1} height={1} fill={color} /> : null;
-        })
-      )}
-    </svg>
-  );
+// ── Agent avatar ──────────────────────────────────────────
+// The bridge stamps each row with its Hermes-profile icon (the same
+// emoji the roster, chat bubbles and ticker already use), so the floor
+// reuses it instead of a lookup that only matched the retired demo
+// roster and showed 🤖 for every live profile.
+function AgentAvatar({ emoji, size }: { emoji: string; size: number }) {
+  return <span style={{ fontSize: size * 0.62, lineHeight: 1 }}>{emoji}</span>;
 }
 
 // ── Activity bubble ───────────────────────────────────────
@@ -297,7 +174,7 @@ function AgentDesk({ agent, label, isMax }: { agent: Agent | undefined; label: s
                   : undefined
               }
             >
-              <PixelSprite agentId={agent?.id ?? ""} size={spriteSize} />
+              <AgentAvatar emoji={agent?.emoji ?? "🪑"} size={spriteSize} />
             </div>
           </div>
 
@@ -354,9 +231,10 @@ function ActivityTicker({ agents }: { agents: Agent[] }) {
 
 // ── Main export ───────────────────────────────────────────
 export default function OfficeView({ agents }: { agents: Agent[] }) {
-  const getAgent = (id: string) => agents.find(a => a.id === id);
-  const maxAgent = getAgent("max");
-  const teamDesks = DESK_LAYOUT.filter(d => d.agentId !== "max");
+  // `default` is the chief-of-staff profile in the live bridge roster.
+  // Fall back to the first profile so the view remains useful with a new roster.
+  const leadAgent = agents.find(a => a.id === "default") ?? agents[0];
+  const teamAgents = agents.filter(a => a.id !== leadAgent?.id);
 
   return (
     <div className="relative rounded-3xl overflow-hidden border border-neutral-800/60 bg-neutral-950/80">
@@ -382,13 +260,13 @@ export default function OfficeView({ agents }: { agents: Agent[] }) {
 
         {/* Desks */}
         <div className="flex flex-col items-center gap-8">
-          {/* Row 1 — Max */}
-          <AgentDesk agent={maxAgent} label="CEO Corner" isMax={true} />
+          {/* Row 1 — chief-of-staff profile */}
+          <AgentDesk agent={leadAgent} label="CEO Corner" isMax={true} />
           <div className="w-px h-4 bg-neutral-700/60" />
-          {/* Row 2 — Team */}
+          {/* Row 2 — live team profiles */}
           <div className="flex flex-wrap justify-center gap-6 md:gap-8">
-            {teamDesks.map(desk => (
-              <AgentDesk key={desk.agentId} agent={getAgent(desk.agentId)} label={desk.label} isMax={false} />
+            {teamAgents.map((agent, index) => (
+              <AgentDesk key={agent.id} agent={agent} label={DESK_LABELS[index] ?? "Team Desk"} isMax={false} />
             ))}
           </div>
         </div>
