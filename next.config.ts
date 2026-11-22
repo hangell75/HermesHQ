@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Vercel-compatible settings
-  output: undefined, // default — Vercel handles this automatically
+  // Docker image ships .next/standalone (see Dockerfile runner stage)
+  output: "standalone",
   images: {
     unoptimized: false,
   },
