@@ -119,7 +119,7 @@ function AgentCard({ agent, isExpanded, onToggle }: { agent: Agent; isExpanded: 
 }
 
 // ── Live Agent Chat ───────────────────────────────────────
-const CHAT_POLL_TIMEOUT_MS = 300_000; // exceeds the bridge RUN_TIMEOUT_MS + poll interval
+const CHAT_POLL_TIMEOUT_MS = 660_000; // must exceed bridge BRIDGE_RUN_TIMEOUT_MS (600s) + poll interval
 
 function AgentChat({ agent, onClose }: { agent: Agent; onClose: () => void }) {
   const [input, setInput] = useState("");
