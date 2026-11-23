@@ -149,6 +149,11 @@ async function chatCompletion(profile, prompt, { timeout = RUN_TIMEOUT_MS, sessi
       ...(toolChoice ? { tool_choice: toolChoice } : {}),
     }),
     signal: AbortSignal.timeout(timeout),
+    // Node's undici defaults (headersTimeout/bodyTimeout = 300000 ms) otherwise
+    // abort long gateway calls with a bare "fetch failed" at exactly 5 min,
+    // regardless of the AbortSignal above.
+    headersTimeout: timeout,
+    bodyTimeout: timeout,
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`gateway HTTP ${res.status}: ${text.slice(0, 300)}`);
