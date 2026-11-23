@@ -119,13 +119,20 @@ function AgentCard({ agent, isExpanded, onToggle }: { agent: Agent; isExpanded: 
 }
 
 // ── Live Agent Chat ───────────────────────────────────────
+const CHAT_POLL_TIMEOUT_MS = 300_000; // exceeds the bridge RUN_TIMEOUT_MS + poll interval
+
 function AgentChat({ agent, onClose }: { agent: Agent; onClose: () => void }) {
   const [input, setInput] = useState("");
   const [msgs, setMsgs] = useState<{ role: "user"|"assistant"; content: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   async function send() {
     const text = input.trim();
@@ -135,17 +142,37 @@ function AgentChat({ agent, onClose }: { agent: Agent; onClose: () => void }) {
     setMsgs(newMsgs);
     setLoading(true);
     try {
+      // Enqueue, then poll: agent runs take minutes and must not be held
+      // open across the reverse proxy (90s read timeout → 504 HTML page).
       const r = await fetch("/api/agent-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ agentId: agent.id, message: text, history: msgs }),
       });
-      const d = await r.json() as { reply?: string; error?: string };
-      if (!r.ok) throw new Error(d.error || `Request failed (${r.status})`);
-      setMsgs([...newMsgs, { role: "assistant", content: d.reply || "The agent returned an empty response." }]);
+      const d = await r.json().catch(() => null) as { requestId?: string; error?: string } | null;
+      if (!r.ok || !d?.requestId) throw new Error(d?.error || `Request failed (${r.status})`);
+
+      const deadline = Date.now() + CHAT_POLL_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        await new Promise((res) => setTimeout(res, 2000));
+        if (!mountedRef.current) return;
+        const s = await fetch(`/api/agent-chat?id=${encodeURIComponent(d.requestId)}`);
+        const st = await s.json().catch(() => null) as { status?: string; reply?: string; error?: string } | null;
+        if (!s.ok) throw new Error(st?.error || `Status request failed (${s.status})`);
+        if (st?.status === "done") {
+          setMsgs([...newMsgs, { role: "assistant", content: st.reply || "The agent returned an empty response." }]);
+          setLoading(false);
+          return;
+        }
+        if (st?.status === "failed") throw new Error(st.error || "Agent run failed");
+        if (st?.status === "rejected") throw new Error("Request rejected");
+      }
+      throw new Error("Timed out waiting for agent");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Request failed";
-      setMsgs([...newMsgs, { role: "assistant", content: `Could not reach ${agent.name}: ${message}` }]);
+      if (mountedRef.current) {
+        setMsgs([...newMsgs, { role: "assistant", content: `Could not reach ${agent.name}: ${message}` }]);
+      }
     }
     setLoading(false);
   }

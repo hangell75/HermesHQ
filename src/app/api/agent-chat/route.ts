@@ -10,14 +10,11 @@ interface AgentChatRequest {
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
 }
 
-interface AgentChatResponse {
-  reply: string;
-  agentId: string;
-}
-
-// Chat is executed by the hermes-bridge as `hermes -p <agentId> -z <prompt>`;
-// this route only enqueues an AgentRequest and waits for the bridge to write the result.
-const MAX_WAIT_MS = 300_000; // must exceed the bridge RUN_TIMEOUT_MS + poll interval
+// Chat is executed by the hermes-bridge as `hermes -p <agentId> -z <prompt>`.
+// Agent runs take minutes, so the request must never be held open across the
+// reverse proxy (nginx proxy_read_timeout is 90s and would answer with a 504
+// HTML page, breaking JSON parsing client-side). POST only enqueues and
+// returns the request id; the client polls GET for status until done/failed.
 const PROFILE_ID = /^[a-z0-9][a-z0-9_-]*$/i;
 
 function buildPrompt(message: string, history: AgentChatRequest['history'] = []): string {
@@ -28,7 +25,7 @@ function buildPrompt(message: string, history: AgentChatRequest['history'] = [])
   return turns ? `${turns}\nUser: ${message}` : message;
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse<AgentChatResponse | { error: string }>> {
+export async function POST(request: NextRequest): Promise<NextResponse<{ requestId: string; status: string } | { error: string }>> {
   try {
     const { agentId, message, history = [] } = (await request.json()) as AgentChatRequest;
 
@@ -51,18 +48,28 @@ export async function POST(request: NextRequest): Promise<NextResponse<AgentChat
       },
     });
 
-    const deadline = Date.now() + MAX_WAIT_MS;
-    while (Date.now() < deadline) {
-      const r = await prisma.agentRequest.findUnique({ where: { id: row.id } });
-      if (!r) break;
-      if (r.status === 'done') return NextResponse.json({ reply: r.result || '', agentId });
-      if (r.status === 'failed') return NextResponse.json({ error: r.error || 'Agent run failed' }, { status: 502 });
-      if (r.status === 'rejected') return NextResponse.json({ error: 'Request rejected' }, { status: 400 });
-      await new Promise((res) => setTimeout(res, 2000));
-    }
-    return NextResponse.json({ error: 'Timed out waiting for agent' }, { status: 504 });
+    return NextResponse.json({ requestId: row.id, status: 'queued' }, { status: 202 });
   } catch (error) {
     console.error('Agent chat error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
+export async function GET(request: NextRequest): Promise<NextResponse<{ status: string; reply?: string; error?: string } | { error: string }>> {
+  try {
+    const id = request.nextUrl.searchParams.get('id');
+    if (!id) {
+      return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+    }
+    const r = await prisma.agentRequest.findUnique({ where: { id } });
+    if (!r) {
+      return NextResponse.json({ error: `Unknown request: ${id}` }, { status: 404 });
+    }
+    if (r.status === 'done') return NextResponse.json({ status: r.status, reply: r.result || '' });
+    if (r.status === 'failed') return NextResponse.json({ status: r.status, error: r.error || 'Agent run failed' });
+    return NextResponse.json({ status: r.status });
+  } catch (error) {
+    console.error('Agent chat status error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
