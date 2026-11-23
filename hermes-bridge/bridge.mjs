@@ -32,6 +32,8 @@
  *               HERMES_API_BASE (default "http://127.0.0.1:8642").
  */
 import pg from "pg";
+import http from "node:http";
+import https from "node:https";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
@@ -127,6 +129,28 @@ async function gatewayServes(profile = "default") {
   } catch { return false; }
 }
 
+// Node's global fetch (undici) enforces a 300000 ms headersTimeout no matter what
+// the init options say — verified on Node 26.12: both `headersTimeout` and
+// `requestTimeout` are ignored per-request and the socket dies at exactly 5 min
+// with a bare "fetch failed". Agent turns legitimately run 2–10 minutes, so the
+// chat call uses node:http directly with one explicit idle-socket deadline.
+function httpPost(url, headers, body, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const lib = u.protocol === "https:" ? https : http;
+    const req = lib.request(u, { method: "POST", headers }, (res) => {
+      let text = "";
+      res.setEncoding("utf8");
+      res.on("data", (c) => { text += c; });
+      res.on("end", () => resolve({ status: res.statusCode, text }));
+    });
+    req.setTimeout(timeoutMs, () =>
+      req.destroy(new Error(`gateway silent for ${Math.round(timeoutMs / 1000)}s — no response`)));
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+
 async function chatCompletion(profile, prompt, { timeout = RUN_TIMEOUT_MS, session = null, toolChoice = null } = {}) {
   const { p, base } = gwRoute(profile);
   const key = profileApiKey(p);
@@ -138,25 +162,13 @@ async function chatCompletion(profile, prompt, { timeout = RUN_TIMEOUT_MS, sessi
   // unknown_execution, which is exactly how the daily brief died. Board work is one-shot per
   // request, so scope the session to the request.
   if (session) headers["X-Hermes-Session-Id"] = session;
-  const res = await fetch(`${base}/chat/completions`, {
-    method: "POST",
-    headers,
-    // The model alias is the profile itself; the default profile serves as "hermes-agent".
-    body: JSON.stringify({
-      model: p === "default" ? "hermes-agent" : p,
-      messages: [{ role: "user", content: String(prompt || "") }],
-      stream: false,
-      ...(toolChoice ? { tool_choice: toolChoice } : {}),
-    }),
-    signal: AbortSignal.timeout(timeout),
-    // Node's undici defaults (headersTimeout/bodyTimeout = 300000 ms) otherwise
-    // abort long gateway calls with a bare "fetch failed" at exactly 5 min,
-    // regardless of the AbortSignal above.
-    headersTimeout: timeout,
-    bodyTimeout: timeout,
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`gateway HTTP ${res.status}: ${text.slice(0, 300)}`);
+  const { status, text } = await httpPost(`${base}/chat/completions`, headers, JSON.stringify({
+    model: p === "default" ? "hermes-agent" : p,
+    messages: [{ role: "user", content: String(prompt || "") }],
+    stream: false,
+    ...(toolChoice ? { tool_choice: toolChoice } : {}),
+  }), timeout);
+  if (status < 200 || status >= 300) throw new Error(`gateway HTTP ${status}: ${text.slice(0, 300)}`);
   const content = JSON.parse(text)?.choices?.[0]?.message?.content ?? "";
   if (!content) throw new Error("gateway returned no message content");
   return content;
