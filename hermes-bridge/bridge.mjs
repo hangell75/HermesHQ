@@ -460,7 +460,11 @@ async function runRequest(r) {
       [r.id, result.slice(0, 8000)]);
     await emit("run", `Done: ${r.title}`, { level: "up", agent: r.agentId || "hermes", detail: result.slice(0, 400), meta: { requestId: r.id } });
   } catch (e) {
-    const msg = (e.stderr || e.message || "error").toString().split("\n")[0].slice(0, 600);
+    const first = (e.stderr || e.message || "error").toString().split("\n")[0];
+    // undici wraps the real socket/timeout reason in e.cause — without it a
+    // "fetch failed" cannot be attributed to a layer (headersTimeout vs reset).
+    const cause = e.cause ? `${e.cause.name || "Error"}: ${e.cause.message || e.cause.code || ""}` : "";
+    const msg = `${first}${cause ? ` [${cause.slice(0, 300)}]` : ""}`.slice(0, 600);
     await q(`UPDATE "AgentRequest" SET status='failed', error=$2, "finishedAt"=now(), "updatedAt"=now() WHERE id=$1`, [r.id, msg]);
     await emit("run", `Failed: ${r.title}`, { level: "down", agent: r.agentId || "hermes", detail: msg, meta: { requestId: r.id } });
     log("request failed:", r.id, msg);
